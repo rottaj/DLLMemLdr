@@ -198,8 +198,6 @@ BOOL CopySections(HANDLE hProcess, const unsigned char *data, PIMAGE_NT_HEADERS 
     PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(pNtHeaders);
     for (i=0; i<pNtHeaders->FileHeader.NumberOfSections; i++, section++) {
         if (section->SizeOfRawData == 0) {
-            // section doesn't contain data in the dll itself, but may define
-            // uninitialized data
             section_size = old_headers->OptionalHeader.SectionAlignment;
 
             if (section_size > 0) {
@@ -209,12 +207,7 @@ BOOL CopySections(HANDLE hProcess, const unsigned char *data, PIMAGE_NT_HEADERS 
                 if (dest == NULL) {
                     return FALSE;
                 }
-
-                // Always use position from file to support alignments smaller
-                // than page size (allocation above will align to page size).
                 dest = pDllBuffer + section->VirtualAddress;
-                // NOTE: On 64bit systems we truncate to 32bit here but expand
-                // again later when "PhysicalAddress" is used.
                 section->Misc.PhysicalAddress = (DWORD) ((uintptr_t) dest & 0xffffffff);
                 _LDR_MEMSET_(dest, 0, section_size);
             }
@@ -222,14 +215,6 @@ BOOL CopySections(HANDLE hProcess, const unsigned char *data, PIMAGE_NT_HEADERS 
             // section is empty
             continue;
         }
-
-        /*
-        if (!CheckSize(size, section->PointerToRawData + section->SizeOfRawData)) {
-            return FALSE;
-        }
-        */
-
-        // commit memory block and copy data from dll
 
         dest = (pDllBuffer + section->VirtualAddress);
         SIZE_T zSectionSize = section->SizeOfRawData;
@@ -239,12 +224,8 @@ BOOL CopySections(HANDLE hProcess, const unsigned char *data, PIMAGE_NT_HEADERS 
             return FALSE;
         }
 
-        // Always use position from file to support alignments smaller
-        // than page size (allocation above will align to page size).
         dest = pDllBuffer + section->VirtualAddress;
         _LDR_MEMCPY_(dest, data + section->PointerToRawData, section->SizeOfRawData);
-        // NOTE: On 64bit systems we truncate to 32bit here but expand
-        // again later when "PhysicalAddress" is used.
         section->Misc.PhysicalAddress = (DWORD) ((uintptr_t) dest & 0xffffffff);
     }
 
@@ -279,7 +260,6 @@ PerformBaseRelocation(PVOID pDllBuffer, PIMAGE_NT_HEADERS pNtHeaders, ptrdiff_t 
                         break;
 
                 case IMAGE_REL_BASED_HIGHLOW:
-                    // change complete 32 bit address
                 {
                     DWORD *patchAddrHL = (DWORD *) (dest + offset);
                     *patchAddrHL += (DWORD) delta;
@@ -392,7 +372,6 @@ BOOL FinalizeSection(HANDLE hProcess, PIMAGE_NT_HEADERS pNtHeaders, PSECTIONFINA
              (sectionData->size % dwPageSize) == 0)
            ) {
             // Only allowed to decommit whole pages
-
             PVOID lpSectionFreeAddress = sectionData->address;
             DWORD dwSectionSize = sectionData->size;
             LDR_FREE_VIRTUAL_MEMORY(hProcess, &lpSectionFreeAddress, &dwSectionSize, MEM_DECOMMIT);
@@ -413,7 +392,6 @@ BOOL FinalizeSection(HANDLE hProcess, PIMAGE_NT_HEADERS pNtHeaders, PSECTIONFINA
     SIZE_T zSectionSize = sectionData->size;
     LPVOID lpSectionBuffer = sectionData->address;
     if (LDR_PROTECT_VIRTUAL_MEMORY(hProcess, &lpSectionBuffer, &zSectionSize, protect, &oldProtect)) {
-        //OutputLastError("Error protecting memory page");
         return FALSE;
     }
     return TRUE;
@@ -424,13 +402,7 @@ BOOL FinalizeSections(HANDLE hProcess, PIMAGE_NT_HEADERS pNtHeaders, DWORD dwPag
 {
     int i;
     PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(pNtHeaders);
-#ifdef _WIN64
-    // "PhysicalAddress" might have been truncated to 32bit above, expand to
-    // 64bits again.
     uintptr_t imageOffset = ((uintptr_t) pNtHeaders->OptionalHeader.ImageBase & 0xffffffff00000000);
-#else
-    static const uintptr_t imageOffset = 0;
-#endif
     SECTIONFINALIZEDATA sectionData;
     sectionData.address = (LPVOID)((uintptr_t)section->Misc.PhysicalAddress | imageOffset);
     sectionData.alignedAddress = AlignAddressDown(sectionData.address, dwPageSize);
@@ -445,8 +417,6 @@ BOOL FinalizeSections(HANDLE hProcess, PIMAGE_NT_HEADERS pNtHeaders, DWORD dwPag
         LPVOID alignedAddress = AlignAddressDown(sectionAddress, dwPageSize);
         SIZE_T sectionSize = GetRealSectionSize(pNtHeaders, section);
         // Combine access flags of all sections that share a page
-        // TODO(fancycode): We currently share flags of a trailing large section
-        //   with the page of a first small section. This should be optimized.
         if (sectionData.alignedAddress == alignedAddress || (uintptr_t) sectionData.address + sectionData.size > (uintptr_t) alignedAddress) {
             // Section shares page with previous
             if ((section->Characteristics & IMAGE_SCN_MEM_DISCARDABLE) == 0 || (sectionData.characteristics & IMAGE_SCN_MEM_DISCARDABLE) == 0) {
@@ -558,7 +528,6 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     _LDR_MEMCPY_(pHeadersBuffer, pDosHeader, pNtHeaders->OptionalHeader.SizeOfHeaders);
 
     // Update & Copy New NT Header
-    //PIMAGE_NT_HEADERS pNewNtHeaders = (PIMAGE_NT_HEADERS)(PVOID)&(pNtHeaders[pDosHeader->e_lfanew]);
     PIMAGE_NT_HEADERS pNewNtHeaders = (PIMAGE_NT_HEADERS)&((const unsigned char *)(pHeadersBuffer))[pDosHeader->e_lfanew];
     // Check if New Optional Header was copied successfully
     if (IMAGE_NT_SIGNATURE != pNewNtHeaders->Signature) {
@@ -568,7 +537,6 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     pNewNtHeaders->OptionalHeader.ImageBase = (uintptr_t)pDllBuffer;
 
     // Copy Sections CopySections(const unsigned char *data, /*size_t size,*/ PIMAGE_NT_HEADERS old_headers, PVOID pDllBuffer, PIMAGE_NT_HEADERS pNtHeaders)
-    // TODO Run tests
     if (!CopySections(hProcess, pPE, pNtHeaders, pDllBuffer, pNewNtHeaders)) {
         return FALSE;
     }
@@ -615,7 +583,6 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     return TRUE;
 
 }
-
 
 BOOL MemLdr(PVOID pPE) {
     if (!MemLdrEx(GetCurrentProcess(), pPE)) {
