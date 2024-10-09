@@ -27,3 +27,22 @@ DLLMemLdr is a lightweight C library that loads DLLs entirely from memory, elimi
 2. **Include the Header**:
    In your source files, include the library header:
    `#include "DLLMemLdr.h"`
+
+
+### Example Usage
+
+Here’s a simple example of how to use DLLMemLdr:
+
+```C
+#include "DLLMemLdr.h"
+
+// Load DLL from memory
+void loadDllFromMemory(void* pPE) {
+    MemLdr(pPE); // pPE is the buffer containing the DLL file
+}
+
+// Load DLL into a specific process
+void loadDllIntoProcess(HANDLE hProcess, void* pPE) {
+    MemLdrEx(hProcess, pPE); // hProcess is the handle to the target process
+}
+```
