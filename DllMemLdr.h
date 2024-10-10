@@ -17,9 +17,9 @@
 #define LDR_FREE_VIRTUAL_MEMORY(hProcess, lpBuffer, dwSizeVirtual, dwFreeType) \
     (API->VirtualFree((hProcess), (lpBuffer), (dwSizeVirtual), (dwFreeType)))
 
-HMODULE GetModuleHandleC(IN LPCWSTR szModuleName);
+HMODULE LdrGetModuleHandleC(IN LPCWSTR szModuleName);
 
-PVOID GetProcAddressC(IN HMODULE hModule, IN LPCWSTR lpProcName);
+PVOID LdrGetProcAddressC(IN HMODULE hModule, IN LPCWSTR lpProcName);
 
 BOOL MemLdrEx(HANDLE hProcess, PVOID pPE);
 BOOL MemLdr(PVOID pPE);

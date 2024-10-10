@@ -32,7 +32,7 @@ OffsetPointer(void* data, ptrdiff_t offset) {
 }
 
 // Used for checking case-sensitive library names
-BOOL IsStringEqual (IN LPCWSTR Str1, IN LPCWSTR Str2) {
+BOOL LdrIsStringEqual (IN LPCWSTR Str1, IN LPCWSTR Str2) {
 
     WCHAR   lStr1	[MAX_PATH],
             lStr2	[MAX_PATH];
@@ -66,7 +66,7 @@ BOOL IsStringEqual (IN LPCWSTR Str1, IN LPCWSTR Str2) {
     return FALSE;
 }
 
-HMODULE GetModuleHandleC(IN LPCWSTR szModuleName) {
+HMODULE LdrGetModuleHandleC(IN LPCWSTR szModuleName) {
 
     // 64 bit
     PLDR_TEB_A pTib = (PLDR_TEB_A)NtCurrentTeb();
@@ -82,7 +82,7 @@ HMODULE GetModuleHandleC(IN LPCWSTR szModuleName) {
         // If not null
         if (pDte->FullDllName.Length != 0) {
             // Print the DLL name
-            if (IsStringEqual(pDte->FullDllName.Buffer, szModuleName)) {
+            if (LdrIsStringEqual(pDte->FullDllName.Buffer, szModuleName)) {
                 return (HMODULE)pDte->Reserved2[0];
             }
 
@@ -99,7 +99,7 @@ HMODULE GetModuleHandleC(IN LPCWSTR szModuleName) {
     return NULL;
 }
 
-PVOID GetProcAddressC(HMODULE hModule, LPCWSTR lpProcName) {
+PVOID LdrGetProcAddressC(HMODULE hModule, LPCWSTR lpProcName) {
 
     // Create LoadLibrary to test if module is loaded
 
@@ -176,15 +176,15 @@ GetRealSectionSize(PIMAGE_NT_HEADERS pNtHeaders, PIMAGE_SECTION_HEADER section) 
 
 BOOL LoadLdrAPI() {
     // Virtual Memory
-    API->VirtualAlloc = (fnLdrNtAllocateVirtualMemory)GetProcAddressC(GetModuleHandleC(wLdrntdll), cLdrAllocateVirtualMemory);
+    API->VirtualAlloc = (fnLdrNtAllocateVirtualMemory)LdrGetProcAddressC(LdrGetModuleHandleC(wLdrntdll), cLdrAllocateVirtualMemory);
     if (API->VirtualAlloc == NULL) {
         return FALSE;
     }
-    API->VirtualProtect = (fnLdrNtProtectVirtualMemory)GetProcAddressC(GetModuleHandleC(wLdrntdll), cLdrProtectVirtualMemory);
+    API->VirtualProtect = (fnLdrNtProtectVirtualMemory)LdrGetProcAddressC(LdrGetModuleHandleC(wLdrntdll), cLdrProtectVirtualMemory);
     if (API->VirtualProtect == NULL) {
         return FALSE;
     }
-    API->VirtualFree = (fnLdrNtFreeVirtualMemory)GetProcAddressC(GetModuleHandleC(wLdrntdll), cLdrFreeVirtualMemory);
+    API->VirtualFree = (fnLdrNtFreeVirtualMemory)LdrGetProcAddressC(LdrGetModuleHandleC(wLdrntdll), cLdrFreeVirtualMemory);
     if (API->VirtualFree == NULL) {
         return FALSE;
     }
