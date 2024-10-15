@@ -5,7 +5,7 @@
 #include <windows.h>
 #include "../DllMemLdr.h"
 
-#define testDll "C:\\path\\to\\fun.dll"
+#define testDll "C:\\path\\to\\fun.dll
 
 int main(void) {
     HANDLE      hFile = NULL;

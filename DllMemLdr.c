@@ -478,9 +478,27 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     if (pDosHeader->e_magic != IMAGE_DOS_SIGNATURE) {
         return FALSE;
     }
-    PIMAGE_NT_HEADERS pNtHeaders = (PIMAGE_NT_HEADERS)(pPE + pDosHeader->e_lfanew);
-    if (pNtHeaders->Signature != IMAGE_NT_SIGNATURE) {
+    PIMAGE_NT_HEADERS pNtHeadersOld = (PIMAGE_NT_HEADERS)(pPE + pDosHeader->e_lfanew);
+    if (pNtHeadersOld->Signature != IMAGE_NT_SIGNATURE) {
         return FALSE;
+    }
+
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(pNtHeadersOld);
+    SIZE_T zOptionalSectionSize = pNtHeadersOld->OptionalHeader.SectionAlignment;
+    SIZE_T zLastSectionEnd = 0;
+    SIZE_T zAlignedImageSize = 0;
+    for (int i=0; i<pNtHeadersOld->FileHeader.NumberOfSections; i++, section++) {
+        size_t endOfSection;
+        if (section->SizeOfRawData == 0) {
+            // Section without data in the DLL
+            endOfSection = section->VirtualAddress + zOptionalSectionSize;
+        } else {
+            endOfSection = section->VirtualAddress + section->SizeOfRawData;
+        }
+
+        if (endOfSection > zLastSectionEnd) {
+            zLastSectionEnd = endOfSection;
+        }
     }
 
     PIMAGE_FILE_HEADER pFileHeader = (PIMAGE_FILE_HEADER)(pPE + pDosHeader->e_lfanew + sizeof(DWORD));
@@ -492,12 +510,18 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     GetNativeSystemInfo(&sysInfo);
 
     // Allocate memory from DLL file size
-    SIZE_T zAlignedMemorySize = (SIZE_T)AlignValueUp(pNtHeaders->OptionalHeader.SizeOfImage, sysInfo.dwPageSize);
+    zAlignedImageSize = AlignValueUp(pNtHeadersOld->OptionalHeader.SizeOfImage, sysInfo.dwPageSize);
+    if (zAlignedImageSize != AlignValueUp(zLastSectionEnd, sysInfo.dwPageSize)) {
+        SetLastError(ERROR_BAD_EXE_FORMAT);
+        return FALSE;
+    }
+
+
     LPVOID pDllBuffer = NULL;
-    LDR_ALLOCATE_VIRTUAL_MEMORY(hProcess, &pDllBuffer, &zAlignedMemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) ;
+    LDR_ALLOCATE_VIRTUAL_MEMORY(hProcess, &pDllBuffer, &zAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) ;
 
     // Memory block may not span 4 GB boundaries.
-    while ((((uintptr_t) pDllBuffer) >> 32) < (((uintptr_t) (pDllBuffer + zAlignedMemorySize)) >> 32)) {
+    while ((((uintptr_t) pDllBuffer) >> 32) < (((uintptr_t) (pDllBuffer + zAlignedImageSize)) >> 32)) {
         POINTER_LIST *node = (POINTER_LIST*) malloc(sizeof(POINTER_LIST));
         if (!node) {
             VirtualFree(pDllBuffer, 0, MEM_RELEASE);
@@ -510,7 +534,7 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
         node->address = pDllBuffer;
         blockedMemory = node;
 
-        LDR_ALLOCATE_VIRTUAL_MEMORY(hProcess, &pDllBuffer, &zAlignedMemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        LDR_ALLOCATE_VIRTUAL_MEMORY(hProcess, &pDllBuffer, &zAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
         if (pDllBuffer == NULL) {
             FreePointerList(blockedMemory);
@@ -521,11 +545,11 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
 
     // Commit memory for PE headers inside pDllMemory
     LPVOID pHeadersBuffer = NULL;
-    SIZE_T zSizeOfHeaders = pNtHeaders->OptionalHeader.SizeOfHeaders;
+    SIZE_T zSizeOfHeaders = pNtHeadersOld->OptionalHeader.SizeOfHeaders;
     LDR_ALLOCATE_VIRTUAL_MEMORY(hProcess, &pHeadersBuffer, &zSizeOfHeaders, MEM_COMMIT, PAGE_READWRITE);
 
-    // Copy Headers to memory
-    _LDR_MEMCPY_(pHeadersBuffer, pDosHeader, pNtHeaders->OptionalHeader.SizeOfHeaders);
+    // Copy Headers to Headers Buffer (pHeadersBuffer)
+    _LDR_MEMCPY_(pHeadersBuffer, pDosHeader, pNtHeadersOld->OptionalHeader.SizeOfHeaders);
 
     // Update & Copy New NT Header
     PIMAGE_NT_HEADERS pNewNtHeaders = (PIMAGE_NT_HEADERS)&((const unsigned char *)(pHeadersBuffer))[pDosHeader->e_lfanew];
@@ -537,14 +561,14 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
     pNewNtHeaders->OptionalHeader.ImageBase = (uintptr_t)pDllBuffer;
 
     // Copy Sections CopySections(const unsigned char *data, /*size_t size,*/ PIMAGE_NT_HEADERS old_headers, PVOID pDllBuffer, PIMAGE_NT_HEADERS pNtHeaders)
-    if (!CopySections(hProcess, pPE, pNtHeaders, pDllBuffer, pNewNtHeaders)) {
+    if (!CopySections(hProcess, pPE, pNtHeadersOld, pDllBuffer, pNewNtHeaders)) {
         return FALSE;
     }
 
     // adjust base address of imported data
-    ptrdiff_t locationDelta = (ptrdiff_t)(pNewNtHeaders->OptionalHeader.ImageBase - pNtHeaders->OptionalHeader.ImageBase);
+    ptrdiff_t locationDelta = (ptrdiff_t)(pNewNtHeaders->OptionalHeader.ImageBase - pNtHeadersOld->OptionalHeader.ImageBase);
     if (locationDelta != 0) {
-        isRelocated = PerformBaseRelocation(pDllBuffer, pNtHeaders, locationDelta);
+        isRelocated = PerformBaseRelocation(pDllBuffer, pNewNtHeaders, locationDelta);
     } else {
         isRelocated = TRUE;
     }
@@ -559,7 +583,7 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
         return FALSE;
     }
 
-    BOOL isDLL = (pNtHeaders->FileHeader.Characteristics & IMAGE_FILE_DLL) != 0;
+    BOOL isDLL = (pNtHeadersOld->FileHeader.Characteristics & IMAGE_FILE_DLL) != 0;
     BOOL initialized = FALSE;
     ExeEntryProc exeEntry = {};
 
@@ -575,6 +599,7 @@ BOOL MemLdrEx(HANDLE hProcess, PVOID pPE) {
             initialized = TRUE;
         } else {
             exeEntry = (ExeEntryProc)(LPVOID)(pDllBuffer + pNewNtHeaders->OptionalHeader.AddressOfEntryPoint);
+            exeEntry();
         }
     } else {
         exeEntry = NULL;
