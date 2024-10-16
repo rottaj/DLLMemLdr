@@ -4,7 +4,8 @@
 #include <windows.h>
 #include <winternl.h>
 
-#define GET_HEADER_DICTIONARY(pNtHeaders, idx)  &pNtHeaders->OptionalHeader.DataDirectory[idx]
+#define GET_HEADER_DICTIONARY(module, idx)  &(module)->headers->OptionalHeader.DataDirectory[idx]
+#define HOST_MACHINE IMAGE_FILE_MACHINE_AMD64
 #define _LDR_MEMCPY_(dest, src, size) (memcpy((dest), (src), (size)))
 #define _LDR_MEMSET_(dest, c, size) (memset((dest), (c), (size)))
 
@@ -16,6 +17,16 @@
 
 #define LDR_FREE_VIRTUAL_MEMORY(hProcess, lpBuffer, dwSizeVirtual, dwFreeType) \
     (API->VirtualFree((hProcess), (lpBuffer), (dwSizeVirtual), (dwFreeType)))
+
+
+typedef struct {
+    PIMAGE_NT_HEADERS         headers;
+    unsigned char            *codeBase;
+    HMODULE                  *modules;
+    INT                       numModules;
+    DWORD                       pageSize;
+
+} *PLDRINSTANCE, LDRINSTANCE;
 
 HMODULE LdrGetModuleHandleC(IN LPCWSTR szModuleName);
 
@@ -45,7 +56,8 @@ typedef NTSTATUS (NTAPI* fnLdrNtFreeVirtualMemory) (
     IN OUT      PULONG      RegionSize,
     IN          ULONG       FreeType);
 
-
+typedef NTSTATUS (NTAPI* fnLdrNtLoadLibrary) (
+    IN         PUNICODE_STRING DriverServiceName);
 
 typedef struct {
     fnLdrNtAllocateVirtualMemory   VirtualAlloc;
@@ -53,41 +65,10 @@ typedef struct {
     fnLdrNtFreeVirtualMemory       VirtualFree;
 } *PLDR_API, LDR_API ;
 
-typedef struct POINTER_LIST {
-    struct POINTER_LIST *next;
-    void *address;
-} POINTER_LIST;
-
-typedef struct {
-    LPVOID address;
-    LPVOID alignedAddress;
-    SIZE_T size;
-    DWORD characteristics;
-    BOOL last;
-} SECTIONFINALIZEDATA, *PSECTIONFINALIZEDATA;
-
-// Protection flags for memory pages (Executable, Readable, Writeable)
-static int ProtectionFlags[2][2][2] = {
-    {
-        // not executable
-        {PAGE_NOACCESS, PAGE_WRITECOPY},
-        {PAGE_READONLY, PAGE_READWRITE},
-    }, {
-        // executable
-                {PAGE_EXECUTE, PAGE_EXECUTE_WRITECOPY},
-                {PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE},
-            },
-    };
-
-
-
-typedef BOOL (WINAPI *DllEntryProc)(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved);
-typedef int (WINAPI *ExeEntryProc)(void);
-
 typedef struct LDR_TEB_A
 {
     struct _NT_TIB NtTib;                                                   //0x0
-    VOID* EnvironmentPointer;                                               //0x1c
+    VOID* EnvironmentPointer;                                               //0x1cG
     struct _CLIENT_ID ClientId;                                             //0x20
     VOID* ActiveRpcHandle;                                                  //0x28
     VOID* ThreadLocalStoragePointer;                                        //0x2c
@@ -95,7 +76,7 @@ typedef struct LDR_TEB_A
     ULONG LastErrorValue;                                                   //0x34
     ULONG CountOfOwnedCriticalSections;                                     //0x38
     VOID* CsrClientThread;                                                  //0x3c
-    VOID* Win32ThreadInfo;                                                  //0x40
+    VOID* Win32ThreadInfo;                                                  //0x40gg
     ULONG User32Reserved[26];                                               //0x44
     ULONG UserReserved[5];                                                  //0xac
     VOID* WOW32Reserved;                                                    //0xc0
@@ -353,5 +334,21 @@ typedef struct _LDR_INITIAL_TEB {
     PVOID                StackCommitMax;
     PVOID                StackReserved;
 } LDR_INITIAL_TEB, *PLDR_INITIAL_TEB;
+
+
+
+#include <windows.h>
+
+typedef void *HMEMORYMODULE;
+
+typedef void *HCUSTOMMODULE;
+
+typedef LPVOID (*CustomAllocFunc)(LPVOID, SIZE_T, DWORD, DWORD, void*);
+typedef BOOL (*CustomFreeFunc)(LPVOID, SIZE_T, DWORD, void*);
+typedef HCUSTOMMODULE (*CustomLoadLibraryFunc)(LPCSTR, void *);
+typedef FARPROC (*CustomGetProcAddressFunc)(HCUSTOMMODULE, LPCSTR, void *);
+typedef void (*CustomFreeLibraryFunc)(HCUSTOMMODULE, void *);
+
+HMEMORYMODULE MemoryLoadLibrary(PVOID pFileBuffer, SIZE_T zFileSize, BOOL isBeacon);
 
 #endif //DLLMEMLDR_LIBRARY_H

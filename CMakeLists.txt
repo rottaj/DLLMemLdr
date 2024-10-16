@@ -14,4 +14,3 @@ target_link_libraries(testing_from_web wininet)
 target_link_libraries(testing_from_disk DLLMemLdr)
 target_link_libraries(testing_from_web DLLMemLdr)
 target_link_libraries(testing_inject_dll DLLMemLdr)
-

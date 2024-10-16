@@ -5,7 +5,7 @@
 #include <windows.h>
 #include "../DllMemLdr.h"
 
-#define testDll "C:\\path\\to\\fun.dll
+#define testDll ""
 
 int main(void) {
     HANDLE      hFile = NULL;
@@ -29,7 +29,7 @@ int main(void) {
         return -1;
     }
     printf("[+] File Buffer %p\n", pBuffer);
-    MemLdr(pBuffer);
+    MemoryLoadLibrary(pBuffer, dwFileSize, TRUE);
     getchar();
     return 0;
 }
