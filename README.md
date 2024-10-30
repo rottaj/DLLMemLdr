@@ -46,3 +46,6 @@ void loadDllIntoProcess(HANDLE hProcess, void* pPE) {
     MemLdrEx(hProcess, pPE); // hProcess is the handle to the target process
 }
 ```
+
+### References
+https://github.com/fancycode/MemoryModule
